@@ -7,7 +7,7 @@
 #     http://www.apache.org/licenses/LICENSE-2.0
 
 NAME="datsync"
-VERSION="1.0.0"
+VERSION="1.0.1"
 VERBOSE=false
 MIRRORING=false
 
@@ -23,6 +23,9 @@ LOCAL_PATH="$DEFAULT_LOCAL_PATH"
 OUT_PATH="$DEFAULT_OUT_PATH"
 ANDROID_INTERNAL_PATH="/sdcard$OUT_PATH"
 BACKUP_PATHS=()
+
+HAS_ANDROID_INT_BACKUP=false
+HAS_ANDROID_EXT_BACKUP=false
 
 init_config() {
   # Create config if it doesn't exist.
@@ -96,7 +99,6 @@ configure() {
   echo "LOCAL_PATH=$LOCAL_PATH"
 }
 
-
 show_help() {
   cat << EOF
 syncdat v$VERSION — Android Data Sync Tool with Persistent Settings
@@ -121,15 +123,17 @@ Options:
 
 Examples:
   push android internal              Push to Android’s internal storage (/sdcard/)
-  pull android -ax                   Pull from Android’s external storage (/storage/)
+  pull -ax                           Pull from Android’s external storage (/storage/)
   push-m android                     Mirror-push to Android (prompts for storage)
   pull-m usb                         Mirror-pull from USB drive
   push usb                           Push to USB from local backup path
   pull android                       Pull from Android (prompts for storage)
 
 Notes:
-  - Mirror operations (-m) will delete files not present in the source — use with caution.
+  - push or pull don't create empty directories use push-m or pull-m instead.
+  - Mirror operations (push-m/pull-m) will also delete files not present in the source — use with caution.
   - If [storage] is omitted for Android, a prompt will let you select internal, external, or both.
+  - Backup path is automatically created in usb if it does not exist.
 EOF
 }
 
@@ -149,8 +153,9 @@ parse_options() {
         MODE="$key"
         TARGET="$2"
         STORAGE=""
+
         case "$TARGET" in
-          -usb|-u)
+          usb)
             TARGET="usb"
             shift 1
             ;;
@@ -169,7 +174,7 @@ parse_options() {
             STORAGE="all"
             shift 2
             ;;
-          -android|-a)
+          android)
             TARGET="android"
             STORAGE="$3"
             if [[ -z "$STORAGE" ]]; then
@@ -199,28 +204,6 @@ parse_options() {
             return 1
             ;;
         esac
-
-        # At this point you have MODE, TARGET, STORAGE
-        echo "Mode: $MODE"
-        echo "Target: $TARGET"
-        echo "Storage: $STORAGE"
-        return 0
-        ;;
-
-
-      -l|--local)
-        LOCAL_PATH="$2"
-        shift 2
-        return 0
-        ;;
-      -a|--android)
-        ANDROID_PATH="$2"
-        shift 2
-        return 0
-        ;;
-      -v|--verbose)
-        VERBOSE=true
-        shift
         return 0
         ;;
       -c|--config)
@@ -252,11 +235,11 @@ main() {
   if parse_options "$@";then
   case "$MODE" in
     push) sync_push ;;
-    mirror-push)
+    push-m)
       MIRRORING=true
       sync_push ;;
     pull) sync_pull ;;
-    mirror-pull)
+    pull-m)
       MIRRORING=true
       sync_pull ;;
   esac
@@ -301,10 +284,9 @@ detect_removable_device() {
 check_android_backup_paths() {
   local potential_mounts
   # Check internal storage
-  echo "android internal path  = $ANDROID_INTERNAL_PATH"
   if adb shell "[ -d \"$ANDROID_INTERNAL_PATH\" ]"; then
     echo "✅ Found backup source path in internal storage: $ANDROID_INTERNAL_PATH"
-    has_anroid_int_backup=true
+    HAS_ANDROID_INT_BACKUP=true
     BACKUP_PATHS+=("$ANDROID_INTERNAL_PATH")
   fi
   # Check external storage (SD cards)
@@ -315,7 +297,7 @@ check_android_backup_paths() {
       if adb shell "[ -d \"$test_dest_path\" ]"; then
         BACKUP_PATHS+=("$test_dest_path")
         echo "✅ Found backup source_path in SD card: $test_dest_path"
-        has_android_ext_backup=true
+        HAS_ANDROID_EXT_BACKUP=true
         break
       fi
     fi
@@ -366,14 +348,40 @@ check_removable_backup_paths() {
     return 0
 }
 
+# Returns true if backup path is present on selected storage
+should_sync_to_android() {
+  case "$STORAGE" in
+    all)
+      if ! $HAS_ANDROID_INT_BACKUP;then
+      echo "⚠ Warning : No valid backup path found in internal storage."
+      create_dest_path_msg
+      fi
+      if ! $HAS_ANDROID_EXT_BACKUP;then
+      echo "⚠ Warning : No valid backup path found in external storage."
+      create_dest_path_msg
+      fi
+      return 0 ;;
+    internal)
+      $HAS_ANDROID_INT_BACKUP && return 0 ;;
+    external)
+      $HAS_ANDROID_EXT_BACKUP && return 0 ;;
+  esac
+  echo "❌ No valid backup path found in selected storage : $STORAGE."
+  create_dest_path_msg
+  return 1
+}
+
 sync_push() {
    case "$TARGET" in
       android)
-        echo "android push test"
         start_adb
         detect_android_device
         if check_android_backup_paths;then
-           sync_pc_to_android
+           if should_sync_to_android; then
+               sync_pc_to_android
+           else
+              exit 0;
+           fi
         fi;;
       usb)
         detect_removable_device
@@ -385,12 +393,16 @@ sync_push() {
 
 sync_pull() {
    case "$TARGET" in
-        android)
-         start_adb
-         detect_android_device
-          if check_android_backup_paths;then
-             sync_android_to_pc
-          fi ;;
+      android)
+        start_adb
+        detect_android_device
+        if check_android_backup_paths ; then
+           if should_sync_to_android; then
+              sync_android_to_pc
+           else
+              exit 0;
+           fi
+        fi  ;;
         usb)
           detect_removable_device
           if check_removable_backup_paths;then
@@ -432,7 +444,7 @@ sync_pc_to_android() {
          esac
 
         # Sync to the selected source path
-        echo "=== Syncing to $source_path ==="
+        echo "============= Syncing to $source_path ============="
         # Ensure destination directory exists
         if ! adb shell "mkdir -p '$source_path'"; then
             echo >&2 "❌ Failed to create destination directory: $source_path"
@@ -589,9 +601,11 @@ sync_pc_to_android() {
     echo " ❌ Failed: $failed_items operations"
     if $success_flag; then
         echo " 🌟 Sync completed successfully!"
+        echo "=========================================================================="
         return 0
     else
         echo >&2 " ⚠️ Sync completed with errors!"
+        echo "=========================================================================="
         return 1
     fi
 }
@@ -616,7 +630,18 @@ sync_android_to_pc() {
 
     # Loop through destination paths
     for source_path in "${BACKUP_PATHS[@]}"; do
-        echo "=== Syncing from $source_path ==="
+        # Assign the storage path that is selected for syncing
+        # TODO : not all android uses this path structure al least not most,
+        # find a better way?
+        case "$STORAGE" in
+            internal)
+              [[ "$source_path" == /sdcard/* || "$source_path" == /storage/emulated/0/* ]] || continue ;;
+            external)
+              [[ "$source_path" == /storage/* && "$source_path" != /storage/emulated/* ]] || continue ;;
+            all) ;;
+        esac
+
+        echo "============= Syncing from $source_path ============="
         mkdir -p "$LOCAL_PATH" || {
             echo >&2 "❌ Failed to ensure local root directory exists"
             ((failed_items++))
@@ -774,7 +799,7 @@ sync_pc_to_removable() {
     local batch_size=100
 
     for source_path in "${BACKUP_PATHS[@]}"; do
-        echo "=== Syncing to $source_path ==="
+        echo "============= Syncing to $source_path ============="
 
         mkdir -p "$source_path" || {
             echo >&2 "❌ Failed to create destination directory: $source_path"
@@ -1044,9 +1069,8 @@ sync_removable_to_pc() {
     fi
 }
 
-
 create_dest_path_msg(){
-   echo "Please make sure the backup folder \"$OUT_PATH\" exists on your target device."
+   echo "Please make sure the backup folder \"$OUT_PATH\" exists on your target."
 }
 
 main "$@"

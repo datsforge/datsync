@@ -21,15 +21,26 @@
 
 Just drop it somewhere in your `PATH`:
 
+
+
 ```bash
 chmod +x datsync.sh
-sudo mv datsync.sh /usr/local/bin/datsync
+mv datsync.sh datsync        # Remove .sh extension
+sudo mv datsync /usr/local/bin/
 ```
 
 Then run it like:
 
 ```bash
 datsync --help
+```
+
+Also configure the target path as you like, defaults are :
+- LOCAL_PATH="$HOME/backups/sync/local"
+- OUT_PATH="/backups/sync/local"
+
+```bash
+datsync --configure
 ```
 
 ---
