@@ -49,19 +49,19 @@ datsync --configure
 
 Push to Android internal:
 ```bash
-datsync push -android internal
+datsync push android internal
 ```
 
 Pull from Android external:
 ```bash
-datsync pull -android external
+datsync pull android external
 # or the short way:
 datsync pull -ax
 ```
 
 Mirror push to USB (deletes files on USB not in local):
 ```bash
-datsync push-m -usb
+datsync push-m usb
 ```
 
 Mirror pull from Android internal:
@@ -71,12 +71,7 @@ datsync pull-m -an
 
 Prompt for storage if not specified:
 ```bash
-datsync push -android
-```
-
-Override local path for this operation only:
-```bash
-datsync push -usb -l /home/user/projects/backups
+datsync push android
 ```
 
 ---
@@ -103,9 +98,9 @@ datsync <mode> <-target> [storage] [options]
 
 ### Android Storage Options
 
-- `-android internal` or `-an` – for `/sdcard/`
-- `-android external` or `-ax` – for `/storage/XXXX-XXXX/`
-- `-android all` or `-aa` – do both
+- `android internal` or `-an` – for `/sdcard/`
+- `android external` or `-ax` – for `/storage/XXXX-XXXX/`
+- `android all` or `-aa` – do both
 
 ---
 
@@ -113,7 +108,6 @@ datsync <mode> <-target> [storage] [options]
 
 | Flag              | Description |
 |-------------------|-------------|
-| `-l <path>`       | Override local path for this operation |
 | `-c`, `--config`  | Set or update default paths |
 | `-h`, `--help`    | Show the help message |
 
@@ -123,7 +117,9 @@ datsync <mode> <-target> [storage] [options]
 
 - **Mirror mode** (`push-m`, `pull-m`) removes files. Don’t be reckless.
 - When syncing to Android and no storage is specified, you'll be asked.
-- Default paths are remembered once set using the config.
+- Default paths are remembered once set using the --config, (saved in $HOME/.config/datsync.conf).
+- It is recommended to create the same directory for the source and target.
+- Backup path is automatically created in usb if it does not exist.
 
 ---
 
