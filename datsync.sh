@@ -7,7 +7,7 @@
 #     http://www.apache.org/licenses/LICENSE-2.0
 
 NAME="datsync"
-VERSION="0.0.1"
+VERSION="1.0.0"
 VERBOSE=false
 MIRRORING=false
 
@@ -23,14 +23,6 @@ LOCAL_PATH="$DEFAULT_LOCAL_PATH"
 OUT_PATH="$DEFAULT_OUT_PATH"
 ANDROID_INTERNAL_PATH="/sdcard$OUT_PATH"
 BACKUP_PATHS=()
-
-MOUNT_DIR="$HOME/dat/Android/mount"
-DEST_PATHS=()
-PATH_EXIST_ON_ANDROID_INTERNAL=false
-PATH_EXIST_ON_ANDROID_EXTERNAL=false
-PATH_EXIST_ON_USB=false
-INTERNAL_ROOT="Internal shared storage"
-SDCARD_ROOT="SD card"
 
 init_config() {
   # Create config if it doesn't exist.
@@ -107,24 +99,37 @@ configure() {
 
 show_help() {
   cat << EOF
-syncdat v$VERSION - Android Data Sync Tool with Persistent Settings
+syncdat v$VERSION — Android Data Sync Tool with Persistent Settings
 
 Usage:
-  -push android         Push data to Android (using saved paths)
-  -pull android         Pull data from Android (using saved paths)
-  -push-mirror android  Deletes all orphan files present in the target path not in present in source.
+  push      <target> [storage]       Push files from local path to device
+  pull      <target> [storage]       Pull files from device to local path
+  push-m    <target> [storage]       Mirror push: remove files on device not in local
+  pull-m    <target> [storage]       Mirror pull: remove files locally not in device
+
+Arguments:
+  <target>                           android | usb
+  [storage] (android only)           internal | external | all
+                                     or use short options:
+                                       -an    (same as "android internal")
+                                       -ax    (same as "android external")
 
 Options:
-  -l, --local PATH    Override local path for this operation
-  -a, --android PATH  Override Android path for this operation
-  -v, --verbose       Show detailed output
-  -c, --config        Configure default paths
-  -h, --help          Show this help
+  -l, --local <PATH>                 Override default local path for this operation
+  -c, --config                       Configure default paths and preferences
+  -h, --help                         Show this help message
 
 Examples:
-  syncdat -push                  # Use saved paths
-  syncdat -pull -a /sdcard/docs  # Override Android path just this once
-  syncdat --config               # Change default paths
+  push android internal              Push to Android’s internal storage (/sdcard/)
+  pull android -ax                   Pull from Android’s external storage (/storage/)
+  push-m android                     Mirror-push to Android (prompts for storage)
+  pull-m usb                         Mirror-pull from USB drive
+  push usb                           Push to USB from local backup path
+  pull android                       Pull from Android (prompts for storage)
+
+Notes:
+  - Mirror operations (-m) will delete files not present in the source — use with caution.
+  - If [storage] is omitted for Android, a prompt will let you select internal, external, or both.
 EOF
 }
 
@@ -140,16 +145,69 @@ parse_options() {
   while [[ $# -gt 0 ]]; do
     key="$1"
     case "$key" in
-      -push|-mirror-push|-pull|-mirror-pull)
-        MODE="${key#-}"  # extract 'push' , 'mirror-push' etc.'
+      push|pull|push-m|pull-m)
+        MODE="$key"
         TARGET="$2"
-       if [[ "$TARGET" != "android" && "$TARGET" != "usb" ]]; then
-          error "Invalid target for -$MODE: $TARGET"
-          return 1
-        fi
-        shift 2
+        STORAGE=""
+        case "$TARGET" in
+          -usb|-u)
+            TARGET="usb"
+            shift 1
+            ;;
+          -an)
+            TARGET="android"
+            STORAGE="internal"
+            shift 2
+            ;;
+          -ax)
+            TARGET="android"
+            STORAGE="external"
+            shift 2
+            ;;
+           -aa)
+            TARGET="android"
+            STORAGE="all"
+            shift 2
+            ;;
+          -android|-a)
+            TARGET="android"
+            STORAGE="$3"
+            if [[ -z "$STORAGE" ]]; then
+              echo "Please choose target :"
+              select choice in "internal" "external" "all"; do
+                case "$choice" in
+                  internal|external|all)
+                    STORAGE="$choice"
+                    break
+                    ;;
+                  *)
+                    echo "Invalid option. Please choose a number."
+                    ;;
+                esac
+              done
+              shift 2
+            else
+              if [[ "$STORAGE" != "internal" && "$STORAGE" != "external" && "$STORAGE" != "all" ]]; then
+                error "Invalid android storage option: $STORAGE (must be 'internal' , 'external' or 'all')"
+                return 1
+              fi
+              shift 3
+            fi
+            ;;
+          *)
+            error "Invalid target for '$MODE': $TARGET"
+            return 1
+            ;;
+        esac
+
+        # At this point you have MODE, TARGET, STORAGE
+        echo "Mode: $MODE"
+        echo "Target: $TARGET"
+        echo "Storage: $STORAGE"
         return 0
         ;;
+
+
       -l|--local)
         LOCAL_PATH="$2"
         shift 2
@@ -246,6 +304,7 @@ check_android_backup_paths() {
   echo "android internal path  = $ANDROID_INTERNAL_PATH"
   if adb shell "[ -d \"$ANDROID_INTERNAL_PATH\" ]"; then
     echo "✅ Found backup source path in internal storage: $ANDROID_INTERNAL_PATH"
+    has_anroid_int_backup=true
     BACKUP_PATHS+=("$ANDROID_INTERNAL_PATH")
   fi
   # Check external storage (SD cards)
@@ -256,6 +315,7 @@ check_android_backup_paths() {
       if adb shell "[ -d \"$test_dest_path\" ]"; then
         BACKUP_PATHS+=("$test_dest_path")
         echo "✅ Found backup source_path in SD card: $test_dest_path"
+        has_android_ext_backup=true
         break
       fi
     fi
@@ -309,11 +369,12 @@ check_removable_backup_paths() {
 sync_push() {
    case "$TARGET" in
       android)
+        echo "android push test"
         start_adb
         detect_android_device
         if check_android_backup_paths;then
            sync_pc_to_android
-        fi ;;
+        fi;;
       usb)
         detect_removable_device
         if check_removable_backup_paths;then
@@ -358,6 +419,19 @@ sync_pc_to_android() {
 
     # Loop through all destination paths
     for source_path in "${BACKUP_PATHS[@]}"; do
+
+        # Assign the storage path that is selected for syncing
+        # TODO : not all android uses this path structure al least not most,
+        # find a better way?
+       case "$STORAGE" in
+           internal)
+             [[ "$source_path" == /sdcard/* || "$source_path" == /storage/emulated/0/* ]] || continue ;;
+           external)
+             [[ "$source_path" == /storage/* && "$source_path" != /storage/emulated/* ]] || continue ;;
+           all) ;;
+         esac
+
+        # Sync to the selected source path
         echo "=== Syncing to $source_path ==="
         # Ensure destination directory exists
         if ! adb shell "mkdir -p '$source_path'"; then
