@@ -1,1 +1,52 @@
+# OS crap
+.DS_Store
+Thumbs.db
+
+# Editor folders
 /.idea
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+
+# System & log files
+*.log
+*.bak
+*.tmp
+*.pid
+
+# Executables & backups
+datsync
+*.out
+*.exe
+*.bin
+*.run
+*.old
+*.save
+
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.rar
+
+# User config files
+.env
+*.conf
+*.cfg
+*.ini
+
+# Git metadata and trash
+*.orig
+*.rej
+
+# Test files
+__tests__/
+test-results/
+*.test
+
+# Miscellaneous
+*.~*
+*~
+
